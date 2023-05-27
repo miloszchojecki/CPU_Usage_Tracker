@@ -2,11 +2,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
-#define MAX_CORES 8
 #define MAX_LINE_LENGTH 256
 #define MAX_LABEL_LENGTH 8
-#define clear() printf("\033[H\033[J")
+//#define clear() printf("\033[H\033[J")
 
 typedef struct {
     unsigned long user;
@@ -20,6 +20,16 @@ typedef struct {
     unsigned long guest;
     unsigned long guest_nice;
 } CpuStats;
+
+typedef struct {
+    CpuStats *prevStats;
+    CpuStats *currStats;
+    long numOfCores;
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    double *usage;
+} ThreadData;
+
 
 static void readCpuStats(CpuStats *stats, int core) {
     FILE *file;
@@ -46,63 +56,128 @@ static void readCpuStats(CpuStats *stats, int core) {
     fclose(file);
 }
 
-int main() {
-    while(1) {
-        sleep(1);
-        clear();
-        CpuStats prevStats[MAX_CORES], currStats[MAX_CORES];
+static void *readerThread(void *arg) {
+    ThreadData *data = (ThreadData *) arg;
+    CpuStats *prevStats = data->prevStats;
+    CpuStats *currStats = data->currStats;
+    long numOfCores = data->numOfCores;
 
-        for (int i = 0; i < MAX_CORES; i++) {
-            readCpuStats(&prevStats[i], i);
-        }
-
-        sleep(1);
-
-        for (int i = 0; i < MAX_CORES; i++) {
-            readCpuStats(&currStats[i], i);
-        }
-
-        unsigned long prevTotal = 0, currTotal = 0;
-        unsigned long prevIdle = 0, currIdle = 0;
-
-        for (int i = 0; i < MAX_CORES; i++) {
-            prevTotal += prevStats[i].user + prevStats[i].nice + prevStats[i].system +
-                         prevStats[i].idle + prevStats[i].iowait + prevStats[i].irq +
-                         prevStats[i].softirq + prevStats[i].steal;
-
-            currTotal += currStats[i].user + currStats[i].nice + currStats[i].system +
-                         currStats[i].idle + currStats[i].iowait + currStats[i].irq +
-                         currStats[i].softirq + currStats[i].steal;
-
-            prevIdle += prevStats[i].idle + prevStats[i].iowait;
-            currIdle += currStats[i].idle + currStats[i].iowait;
-        }
-
-        unsigned long prevTotalDiff = currTotal - prevTotal;
-        unsigned long currIdleDiff = currIdle - prevIdle;
-
-        double cpuUsage = (double) (prevTotalDiff - currIdleDiff) / (double) prevTotalDiff * 100.0;
-
-        printf("Overall CPU Usage: %.2f%%\n", cpuUsage);
-
-        for (int i = 0; i < MAX_CORES; i++) {
-            prevTotal = prevStats[i].user + prevStats[i].nice + prevStats[i].system +
-                        prevStats[i].idle + prevStats[i].iowait + prevStats[i].irq +
-                        prevStats[i].softirq + prevStats[i].steal;
-
-            currTotal = currStats[i].user + currStats[i].nice + currStats[i].system +
-                        currStats[i].idle + currStats[i].iowait + currStats[i].irq +
-                        currStats[i].softirq + currStats[i].steal;
-
-            prevIdle = prevStats[i].idle + prevStats[i].iowait;
-            currIdle = currStats[i].idle + currStats[i].iowait;
-
-            prevTotalDiff = currTotal - prevTotal;
-            currIdleDiff = currIdle - prevIdle;
-
-            double coreUsage = (double) (prevTotalDiff - currIdleDiff) / (double) prevTotalDiff * 100.0;
-
-            printf("Core %d Usage: %.2f%%\n", i, coreUsage);
-        }
+    pthread_mutex_lock(&(data->mutex));
+    for (short i = 0; i < numOfCores; i++) {
+        readCpuStats(&prevStats[i], i);
     }
+
+    sleep(1);
+
+    for (short i = 0; i < numOfCores; i++) {
+        readCpuStats(&currStats[i], i);
+    }
+    pthread_cond_signal(&(data->cond));
+    pthread_mutex_unlock(&(data->mutex));
+
+    sleep(1);
+
+    pthread_exit(NULL);
+}
+
+static void *analyzerThread(void *arg) {
+    ThreadData *data = (ThreadData *) arg;
+    CpuStats *prevStats = data->prevStats;
+    CpuStats *currStats = data->currStats;
+    long numOfCores = data->numOfCores;
+    double *usage = data->usage;
+
+    pthread_mutex_lock(&(data->mutex));
+    unsigned long prevTotal = 0, currTotal = 0;
+    unsigned long prevIdle = 0, currIdle = 0;
+
+    for (short i = 0; i < numOfCores; i++) {
+        prevTotal += prevStats[i].user + prevStats[i].nice + prevStats[i].system +
+                     prevStats[i].idle + prevStats[i].iowait + prevStats[i].irq +
+                     prevStats[i].softirq + prevStats[i].steal;
+
+        currTotal += currStats[i].user + currStats[i].nice + currStats[i].system +
+                     currStats[i].idle + currStats[i].iowait + currStats[i].irq +
+                     currStats[i].softirq + currStats[i].steal;
+
+        prevIdle += prevStats[i].idle + prevStats[i].iowait;
+        currIdle += currStats[i].idle + currStats[i].iowait;
+    }
+
+    unsigned long prevTotalDiff = currTotal - prevTotal;
+    unsigned long currIdleDiff = currIdle - prevIdle;
+
+    double cpuUsage = (double) (prevTotalDiff - currIdleDiff) / (double) prevTotalDiff * 100.0;
+
+    usage[0] = cpuUsage;
+
+    for (short i = 0; i < numOfCores; i++) {
+        prevTotal = prevStats[i].user + prevStats[i].nice + prevStats[i].system +
+                    prevStats[i].idle + prevStats[i].iowait + prevStats[i].irq +
+                    prevStats[i].softirq + prevStats[i].steal;
+
+        currTotal = currStats[i].user + currStats[i].nice + currStats[i].system +
+                    currStats[i].idle + currStats[i].iowait + currStats[i].irq +
+                    currStats[i].softirq + currStats[i].steal;
+
+        prevIdle = prevStats[i].idle + prevStats[i].iowait;
+        currIdle = currStats[i].idle + currStats[i].iowait;
+
+        prevTotalDiff = currTotal - prevTotal;
+        currIdleDiff = currIdle - prevIdle;
+
+        double coreUsage = (double) (prevTotalDiff - currIdleDiff) / (double) prevTotalDiff * 100.0;
+
+        usage[i + 1] = coreUsage;
+    }
+
+    pthread_cond_signal(&(data->cond));
+    pthread_mutex_unlock(&(data->mutex));
+
+    sleep(1);
+
+    pthread_exit(NULL);
+}
+
+static void *printerThread(void *arg) {
+    ThreadData *data = (ThreadData *) arg;
+    long numOfCores = data->numOfCores;
+    double *usage = data->usage;
+    pthread_mutex_lock(&(data->mutex));
+    printf("Overall CPU Usage: %.2f%%\n", usage[0]);
+    for (short i = 0; i < numOfCores; i++) {
+        printf("Core %d Usage: %.2f%%\n", i, usage[i + 1]);
+    }
+    pthread_cond_signal(&(data->cond));
+    pthread_mutex_unlock(&(data->mutex));
+
+    pthread_exit(NULL);
+}
+
+int main(void) {
+    long numOfCores = sysconf(_SC_NPROCESSORS_ONLN);
+
+    ThreadData data;
+    data.numOfCores = numOfCores;
+    data.prevStats = malloc(sizeof(CpuStats) * (unsigned long) numOfCores);
+    data.currStats = malloc(sizeof(CpuStats) * (unsigned long) numOfCores);
+    data.usage = malloc(sizeof(double) * (unsigned long) (numOfCores + 1));
+
+
+    pthread_mutex_init(&(data.mutex), NULL);
+    pthread_cond_init(&(data.cond), NULL);
+
+    pthread_t readerThreadId, analyzerThreadId, printerThreadId;
+
+    // Tworzymy wątki
+    pthread_create(&readerThreadId, NULL, readerThread, &data);
+    pthread_create(&analyzerThreadId, NULL, analyzerThread, &data);
+    pthread_create(&printerThreadId, NULL, printerThread, &data);
+
+    // Oczekujemy na zakończenie wątków
+    pthread_join(readerThreadId, NULL);
+    pthread_join(analyzerThreadId, NULL);
+    pthread_join(printerThreadId, NULL);
+
+    return 0;
 }
