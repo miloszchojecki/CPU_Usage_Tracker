@@ -30,7 +30,6 @@ typedef struct {
     double *usage;
 } ThreadData;
 
-
 static void readCpuStats(CpuStats *stats, int core) {
     FILE *file;
     char line[MAX_LINE_LENGTH];
@@ -163,21 +162,22 @@ int main(void) {
     data.currStats = malloc(sizeof(CpuStats) * (unsigned long) numOfCores);
     data.usage = malloc(sizeof(double) * (unsigned long) (numOfCores + 1));
 
-
     pthread_mutex_init(&(data.mutex), NULL);
     pthread_cond_init(&(data.cond), NULL);
 
     pthread_t readerThreadId, analyzerThreadId, printerThreadId;
 
-    // Tworzymy wątki
     pthread_create(&readerThreadId, NULL, readerThread, &data);
     pthread_create(&analyzerThreadId, NULL, analyzerThread, &data);
     pthread_create(&printerThreadId, NULL, printerThread, &data);
 
-    // Oczekujemy na zakończenie wątków
     pthread_join(readerThreadId, NULL);
     pthread_join(analyzerThreadId, NULL);
     pthread_join(printerThreadId, NULL);
+
+    free(data.prevStats);
+    free(data.currStats);
+    free(data.usage);
 
     return 0;
 }
