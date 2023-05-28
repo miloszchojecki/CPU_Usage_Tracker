@@ -73,7 +73,6 @@ static void *readerThread(void *arg) {
     pthread_mutex_unlock(&(data->mutex));
 
     sleep(1);
-
     pthread_exit(NULL);
 }
 
