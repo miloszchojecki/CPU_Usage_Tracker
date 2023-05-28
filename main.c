@@ -6,7 +6,7 @@
 
 #define MAX_LINE_LENGTH 256
 #define MAX_LABEL_LENGTH 8
-//#define clear() printf("\033[H\033[J")
+#define clear() printf("\033[H\033[J")
 
 typedef struct {
     unsigned long user;
@@ -26,7 +26,6 @@ typedef struct {
     CpuStats *currStats;
     long numOfCores;
     pthread_mutex_t mutex;
-    pthread_cond_t cond;
     double *usage;
 } ThreadData;
 
@@ -71,7 +70,6 @@ static void *readerThread(void *arg) {
     for (short i = 0; i < numOfCores; i++) {
         readCpuStats(&currStats[i], i);
     }
-    pthread_cond_signal(&(data->cond));
     pthread_mutex_unlock(&(data->mutex));
 
     sleep(1);
@@ -129,8 +127,6 @@ static void *analyzerThread(void *arg) {
 
         usage[i + 1] = coreUsage;
     }
-
-    pthread_cond_signal(&(data->cond));
     pthread_mutex_unlock(&(data->mutex));
 
     sleep(1);
@@ -143,11 +139,11 @@ static void *printerThread(void *arg) {
     long numOfCores = data->numOfCores;
     double *usage = data->usage;
     pthread_mutex_lock(&(data->mutex));
+    clear();
     printf("Overall CPU Usage: %.2f%%\n", usage[0]);
     for (short i = 0; i < numOfCores; i++) {
         printf("Core %d Usage: %.2f%%\n", i, usage[i + 1]);
     }
-    pthread_cond_signal(&(data->cond));
     pthread_mutex_unlock(&(data->mutex));
 
     pthread_exit(NULL);
@@ -155,6 +151,7 @@ static void *printerThread(void *arg) {
 
 int main(void) {
     long numOfCores = sysconf(_SC_NPROCESSORS_ONLN);
+    int isRunning = 1;
 
     ThreadData data;
     data.numOfCores = numOfCores;
@@ -163,21 +160,19 @@ int main(void) {
     data.usage = malloc(sizeof(double) * (unsigned long) (numOfCores + 1));
 
     pthread_mutex_init(&(data.mutex), NULL);
-    pthread_cond_init(&(data.cond), NULL);
 
     pthread_t readerThreadId, analyzerThreadId, printerThreadId;
 
-    pthread_create(&readerThreadId, NULL, readerThread, &data);
-    pthread_create(&analyzerThreadId, NULL, analyzerThread, &data);
-    pthread_create(&printerThreadId, NULL, printerThread, &data);
+    while (isRunning) {
+        pthread_create(&readerThreadId, NULL, readerThread, &data);
+        pthread_create(&analyzerThreadId, NULL, analyzerThread, &data);
+        pthread_create(&printerThreadId, NULL, printerThread, &data);
 
-    pthread_join(readerThreadId, NULL);
-    pthread_join(analyzerThreadId, NULL);
-    pthread_join(printerThreadId, NULL);
-
+        pthread_join(readerThreadId, NULL);
+        pthread_join(analyzerThreadId, NULL);
+        pthread_join(printerThreadId, NULL);
+    }
     free(data.prevStats);
     free(data.currStats);
     free(data.usage);
-
-    return 0;
 }
