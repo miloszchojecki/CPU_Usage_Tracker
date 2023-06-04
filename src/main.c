@@ -6,26 +6,12 @@
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <signal.h>
-#include <assert.h>
+#include "main.h"
 
-#define MAX_LINE_LENGTH 256
-#define MAX_LABEL_LENGTH 8
 #define clear() printf("\033[H\033[J")
 
-static _Atomic bool isRunning = true;
-
-typedef struct {
-    unsigned long user;
-    unsigned long nice;
-    unsigned long system;
-    unsigned long idle;
-    unsigned long iowait;
-    unsigned long irq;
-    unsigned long softirq;
-    unsigned long steal;
-    unsigned long guest;
-    unsigned long guest_nice;
-} CpuStats;
+static _Atomic bool
+isRunning = true;
 
 typedef struct {
     CpuStats *prevStats;
@@ -40,31 +26,6 @@ typedef struct {
     FILE *logFile;
     pthread_mutex_t mutex;
 } LoggerThreadData;
-
-static void readCpuStats(CpuStats *stats, int core) {
-    FILE *file;
-    char line[MAX_LINE_LENGTH];
-    char cpuLabel[MAX_LABEL_LENGTH];
-
-    sprintf(cpuLabel, "cpu%d", core);
-
-    file = fopen("/proc/stat", "r");
-    if (file == NULL) {
-        perror("Failed to open /proc/stat");
-        exit(1);
-    }
-
-    while (fgets(line, sizeof(line), file)) {
-        if (strncmp(line, cpuLabel, strlen(cpuLabel)) == 0) {
-            sscanf(line + strlen(cpuLabel), "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu",
-                   &stats->user, &stats->nice, &stats->system, &stats->idle,
-                   &stats->iowait, &stats->irq, &stats->softirq, &stats->steal,
-                   &stats->guest, &stats->guest_nice);
-            break;
-        }
-    }
-    fclose(file);
-}
 
 static void *readerThread(void *arg) {
     ThreadData *data = (ThreadData *) arg;
@@ -118,9 +79,13 @@ static void *analyzerThread(void *arg) {
         unsigned long prevTotalDiff = currTotal - prevTotal;
         unsigned long currIdleDiff = currIdle - prevIdle;
 
-        double cpuUsage = (double) (prevTotalDiff - currIdleDiff) / (double) prevTotalDiff * 100.0;
-
-        usage[0] = cpuUsage;
+        if (prevTotalDiff == 0) {
+            double cpuUsage = 0;
+            usage[0] = cpuUsage;
+        } else {
+            double cpuUsage = (double) (prevTotalDiff - currIdleDiff) / (double) prevTotalDiff * 100.0;
+            usage[0] = cpuUsage;
+        }
 
         for (short i = 0; i < numOfCores; i++) {
             prevTotal = prevStats[i].user + prevStats[i].nice + prevStats[i].system +
@@ -137,9 +102,13 @@ static void *analyzerThread(void *arg) {
             prevTotalDiff = currTotal - prevTotal;
             currIdleDiff = currIdle - prevIdle;
 
-            double coreUsage = (double) (prevTotalDiff - currIdleDiff) / (double) prevTotalDiff * 100.0;
-
-            usage[i + 1] = coreUsage;
+            if (prevTotalDiff == 0) {
+                double coreUsage = 0;
+                usage[i + 1] = coreUsage;
+            } else {
+                double coreUsage = (double) (prevTotalDiff - currIdleDiff) / (double) prevTotalDiff * 100.0;
+                usage[i + 1] = coreUsage;
+            }
         }
         pthread_mutex_unlock(&(data->mutex));
 
