@@ -1,15 +1,25 @@
-cmake_minimum_required(VERSION 3.16)
-project(CPU_Usage_Tracker C)
+cmake_minimum_required(VERSION 3.0)
+project(CPU_Usage_Tracker)
 
-set(CMAKE_C_STANDARD 11)
-add_executable(CPU_Usage_Tracker main.c)
+set(CMAKE_C_COMPILER clang)
 
-string(FIND "${CMAKE_C_COMPILER}" "clang" MAK_COMPILER_CLANG)
-if(MAK_COMPILER_CLANG GREATER -1)
-    target_compile_options(CPU_Usage_Tracker PRIVATE -Weverything -Wno-atomic-implicit-seq-cst)
-    target_link_options(CPU_Usage_Tracker PRIVATE -lpthread)
-else()
-    target_compile_options(CPU_Usage_Tracker PRIVATE -Wall -Wextra --pedantic -Wno-atomic-implicit-seq-cst)
-    target_link_options(CPU_Usage_Tracker PRIVATE -pthread)
+if (DEFINED ENV{CC})
+    set(CMAKE_C_COMPILER $ENV{CC})
 endif()
 
+if ("${CMAKE_C_COMPILER_ID}" STREQUAL "Clang")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Weverything -Wno-atomic-implicit-seq-cst -std=c11")
+elseif ("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra --pedantic -Wno-atomic-implicit-seq-cst -std=c11")
+endif()
+
+file(GLOB SOURCES "*.c")
+
+find_package(Threads REQUIRED)
+if (THREADS_HAVE_PTHREAD_ARG)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pthread")
+endif()
+
+add_executable(cpu ${SOURCES})
+
+target_link_libraries(cpu PRIVATE Threads::Threads)
