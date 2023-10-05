@@ -1,3 +1,3 @@
 # CPU_Usage_Tracker
 
-Prosta aplikacja konsolowa do śledzenia zużycia procesora
+Simple C thread based console app to track usage of CPU. 
